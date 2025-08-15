@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { config } from "dotenv";
+config();
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import * as fsp from "node:fs/promises";
