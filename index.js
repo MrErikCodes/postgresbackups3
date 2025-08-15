@@ -1,20 +1,36 @@
 #!/usr/bin/env node
-import { config } from "dotenv";
-config();
-import { spawn } from "node:child_process";
-import { createReadStream } from "node:fs";
-import * as fsp from "node:fs/promises";
-import { tmpdir, cpus } from "node:os";
-import { join } from "node:path";
-import {
+require("dotenv").config();
+const { spawn } = require("node:child_process");
+const { createReadStream } = require("node:fs");
+const fsp = require("node:fs/promises");
+const { tmpdir, cpus } = require("node:os");
+const { join } = require("node:path");
+const {
   S3Client,
   PutObjectCommand,
-  ListObjectsV2Command,
+  ListObjectsV2Command, // prettier-ignore
   DeleteObjectsCommand,
-} from "@aws-sdk/client-s3";
+} = require("@aws-sdk/client-s3");
+const axios = require("axios");
 
 /** ===== Config via environment ===== */
 const env = process.env;
+
+// Webhook configuration
+const WEBHOOK_URL = "https://connect.signl4.com/webhook/jvdpyx198w";
+
+// Function to send webhook notifications
+async function sendWebhookNotification(title, message) {
+  try {
+    await axios.post(WEBHOOK_URL, {
+      title: title,
+      text: message,
+    });
+    console.log(`Webhook notification sent: ${title}`);
+  } catch (error) {
+    console.error(`Failed to send webhook notification: ${error.message}`);
+  }
+}
 
 // Required
 [
@@ -297,9 +313,17 @@ async function backupOneDatabase(dbName, rootWorkdir) {
 }
 
 async function main() {
+  // Send start notification
+  await sendWebhookNotification(
+    "PostgreSQL Backup Started",
+    `Starting backup process for databases on ${env.PGHOST}`
+  );
+
   const dbs = await getDatabases();
   if (!dbs.length) {
-    console.error("No databases found to back up.");
+    const errorMsg = "No databases found to back up.";
+    console.error(errorMsg);
+    await sendWebhookNotification("PostgreSQL Backup Failed", errorMsg);
     process.exit(3);
   }
   console.log(
@@ -313,13 +337,22 @@ async function main() {
       (dbName) => backupOneDatabase(dbName, rootWorkdir),
       CONCURRENCY
     );
-    console.log("\n🎉 All databases backed up successfully.");
+    const successMsg = `All ${dbs.length} database(s) backed up successfully.`;
+    console.log(`\n🎉 ${successMsg}`);
+    await sendWebhookNotification("PostgreSQL Backup Completed", successMsg);
+  } catch (error) {
+    const errorMsg = `Backup failed: ${error.message}`;
+    console.error(`❌ ${errorMsg}`);
+    await sendWebhookNotification("PostgreSQL Backup Failed", errorMsg);
+    throw error;
   } finally {
     await fsp.rm(rootWorkdir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
-main().catch((e) => {
-  console.error("❌ Backup failed:", e.message);
+main().catch(async (e) => {
+  const errorMsg = `Backup failed: ${e.message}`;
+  console.error(`❌ ${errorMsg}`);
+  await sendWebhookNotification("PostgreSQL Backup Failed", errorMsg);
   process.exit(1);
 });
